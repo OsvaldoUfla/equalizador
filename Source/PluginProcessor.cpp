@@ -22,11 +22,7 @@ MyAudioProcessorAudioProcessor::MyAudioProcessorAudioProcessor()
                        )
 #endif
 {
-    // Inicialize os coeficientes dos filtros aqui (para 3 bandas como exemplo)
-    // Alterado: O método setCoefficients foi substituído por atribuição direta aos coeficientes.
-    filterBand1.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(getSampleRate(), 500.0f);
-    filterBand2.coefficients = juce::dsp::IIR::Coefficients<float>::makeBandPass(getSampleRate(), 1000.0f, 1.0f);
-    filterBand3.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(getSampleRate(), 3000.0f);
+
 }
 
 MyAudioProcessorAudioProcessor::~MyAudioProcessorAudioProcessor()
@@ -95,20 +91,55 @@ void MyAudioProcessorAudioProcessor::changeProgramName (int index, const juce::S
 {
 }
 
+void MyAudioProcessorAudioProcessor::updateCoefficients(juce::dsp::IIR::Filter<float>::CoefficientsPtr& old, const juce::dsp::IIR::Filter<float>::CoefficientsPtr& replacements) 
+{
+    *old = *replacements;
+}
+
+void MyAudioProcessorAudioProcessor::updatePeakFilter(const ChainSettings& chainSettings)
+{
+    auto peakCoefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(getSampleRate(), chainSettings.peakFreq, chainSettings.peakQuality, juce::Decibels::decibelsToGain(chainSettings.peakGain));
+
+    updateCoefficients(leftChannelChain.get<ChainPositions::Peak>().coefficients, peakCoefficients);
+    updateCoefficients(rightChannelChain.get<ChainPositions::Peak>().coefficients, peakCoefficients);
+}
+
 //==============================================================================
 void MyAudioProcessorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Inicialize os filtros com a taxa de amostragem atual
-    // Alterado: Atualiza os coeficientes dos filtros com a taxa de amostragem atual.
-    filterBand1.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, 500.0f);
-    filterBand2.coefficients = juce::dsp::IIR::Coefficients<float>::makeBandPass(sampleRate, 1000.0f, 1.0f);
-    filterBand3.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, 3000.0f);
+    juce::dsp::ProcessSpec spec;
+    spec.maximumBlockSize = samplesPerBlock;
+    spec.numChannels = 1;
+    spec.sampleRate = sampleRate;
 
-    // Resete os filtros
-    // Alterado: Adiciona o reset dos filtros para garantir que estejam prontos para o processamento.
-    filterBand1.reset();
-    filterBand2.reset();
-    filterBand3.reset();
+    leftChannelChain.prepare(spec);
+    rightChannelChain.prepare(spec);
+
+    auto chainSettings = getChainSettings(apvts);
+
+    updatePeakFilter(chainSettings);
+
+    // Desenha os coeficientes de um filtro passa-altas de Butterworth de alta ordem
+    // `chainSettings.lowCutSlope` representa a inclinação desejada do filtro:
+    // Slope Choice 0: 12 dB/oct -> Filtro de 2 ordem
+    // Slope Choice 1: 24 dB/oct -> Filtro de 4 ordem
+    // Slope Choice 2: 36 dB/oct -> Filtro de 6 ordem
+    // Slope Choice 3: 48 dB/oct -> Filtro de 8 ordem
+    auto lowCutCoefficients = juce::dsp::FilterDesign<float>::designIIRHighpassHighOrderButterworthMethod(chainSettings.lowCutFreq, sampleRate, 2*(chainSettings.lowCutSlope + 1));
+
+    auto& leftLowCut = leftChannelChain.get<ChainPositions::LowCut>();
+    updateCutFilter(leftLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
+
+    auto& rightLowCut = rightChannelChain.get<ChainPositions::LowCut>();
+    updateCutFilter(rightLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
+
+    auto highCutCoefficients = juce::dsp::FilterDesign<float>::designIIRLowpassHighOrderButterworthMethod(chainSettings.highCutFreq, sampleRate, 2 * (chainSettings.highCutSlope + 1));
+
+    auto& leftHighCut = leftChannelChain.get<ChainPositions::HighCut>();
+    updateCutFilter(leftHighCut, highCutCoefficients, chainSettings.highCutSlope);
+
+    auto& rightHighCut = rightChannelChain.get<ChainPositions::HighCut>();
+    updateCutFilter(rightHighCut, highCutCoefficients, chainSettings.highCutSlope);
 }
 
 void MyAudioProcessorAudioProcessor::releaseResources()
@@ -153,23 +184,37 @@ void MyAudioProcessorAudioProcessor::processBlock (juce::AudioBuffer<float>& buf
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // Processa áudio através dos filtros
-    for (int channel = 0; channel < totalNumInputChannels; ++channel)
-    {
-        auto* channelData = buffer.getWritePointer (channel);
+    auto chainSettings = getChainSettings(apvts);
 
-        // Cria um AudioBlock a partir do buffer
-        // Alterado: Adiciona a criação de um AudioBlock a partir do buffer.
-        juce::dsp::AudioBlock<float> audioBlock(buffer);
-        // Alterado: Cria o contexto de processamento a partir do AudioBlock.
-        juce::dsp::ProcessContextReplacing<float> context(audioBlock);
+    updatePeakFilter(chainSettings);
 
-        // Aplica filtros ao bloco de áudio
-        // Alterado: Usa o método process do filtro com o contexto criado.
-        filterBand1.process(context);
-        filterBand2.process(context);
-        filterBand3.process(context);
-    }
+    auto lowCutCoefficients = juce::dsp::FilterDesign<float>::designIIRHighpassHighOrderButterworthMethod(chainSettings.lowCutFreq, getSampleRate(), 2 * (chainSettings.lowCutSlope + 1));
+
+    auto& leftLowCut = leftChannelChain.get<ChainPositions::LowCut>();
+    updateCutFilter(leftLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
+
+    auto& rightLowCut = rightChannelChain.get<ChainPositions::LowCut>();
+    updateCutFilter(rightLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
+
+    auto highCutCoefficients = juce::dsp::FilterDesign<float>::designIIRLowpassHighOrderButterworthMethod(chainSettings.highCutFreq, getSampleRate(), 2 * (chainSettings.highCutSlope + 1));
+
+    auto& leftHighCut = leftChannelChain.get<ChainPositions::HighCut>();
+    updateCutFilter(leftHighCut, highCutCoefficients, chainSettings.highCutSlope);
+
+    auto& rightHighCut = rightChannelChain.get<ChainPositions::HighCut>();
+    updateCutFilter(rightHighCut, highCutCoefficients, chainSettings.highCutSlope);
+
+    // Cria um AudioBlock a partir do buffer
+    juce::dsp::AudioBlock<float> audioBlock(buffer);
+    auto leftAudioBlock = audioBlock.getSingleChannelBlock(0);
+    auto rightAudioBlock = audioBlock.getSingleChannelBlock(1);
+
+    juce::dsp::ProcessContextReplacing<float> leftContext(leftAudioBlock);
+    juce::dsp::ProcessContextReplacing<float> rightContext(rightAudioBlock);
+
+    leftChannelChain.process(leftContext);
+    rightChannelChain.process(rightContext);
+
 }
 
 //==============================================================================
@@ -180,7 +225,9 @@ bool MyAudioProcessorAudioProcessor::hasEditor() const
 
 juce::AudioProcessorEditor* MyAudioProcessorAudioProcessor::createEditor()
 {
-    return new MyAudioProcessorAudioProcessorEditor (*this);
+
+    //return new MyAudioProcessorAudioProcessorEditor (*this);
+    return new juce::GenericAudioProcessorEditor(*this);
 }
 
 //==============================================================================
@@ -202,4 +249,46 @@ void MyAudioProcessorAudioProcessor::setStateInformation (const void* data, int 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new MyAudioProcessorAudioProcessor();
+}
+
+// Define o Layout dos 3 parâmetros: Low Band, High Band e Parametric/Peak Band
+juce::AudioProcessorValueTreeState::ParameterLayout MyAudioProcessorAudioProcessor::createParameterLayout()
+{
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+    layout.add(std::make_unique<juce::AudioParameterFloat>("LowCut", "LowCut", juce::NormalisableRange<float>(20.f, 20000.f, 1.f, 0.25f), 20.f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("HighCut", "HighCut", juce::NormalisableRange<float>(20.f, 20000.f, 1.f, 0.25f), 20000.f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("Peak", "Peak", juce::NormalisableRange<float>(20.f, 20000.f, 1.f, 0.25f), 750.f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("Peak Gain", "Peak Gain", juce::NormalisableRange<float>(-24.f, 24.f, 0.5f, 1.f), 0.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>("Peak Quality", "Peak Quality", juce::NormalisableRange<float>(0.1f, 10.f, 0.05f, 1.f), 1.f));
+
+    // Inclinação mínima de 12 dB/oitava para LowCut e HighCut
+    juce::StringArray strArr;
+    for (int i = 0; i < 4; ++i) 
+    {
+        juce::String str;
+        str << (12 + 12 * i);
+        str << " db";
+        strArr.add(str);
+    }
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>("LowCut Slope", "LowCut Slope", strArr, 0)); // Inicializa com 12 dB/oitava
+    layout.add(std::make_unique<juce::AudioParameterChoice>("HighCut Slope", "HighCut Slope", strArr, 0)); // Inicializa com 12 dB/oitava
+    return layout;
+}
+
+ChainSettings getChainSettings(juce::AudioProcessorValueTreeState& apvts)
+{
+    ChainSettings settings;
+    // Recupera valores do ValueTreeState e atribui à estrutura ChainSettings
+    settings.peakFreq = apvts.getRawParameterValue("Peak")->load();
+    settings.peakGain = apvts.getRawParameterValue("Peak Gain")->load();
+    settings.peakQuality = apvts.getRawParameterValue("Peak Quality")->load();
+
+    settings.lowCutFreq = apvts.getRawParameterValue("LowCut")->load();
+    settings.highCutFreq = apvts.getRawParameterValue("HighCut")->load();
+
+    settings.lowCutSlope = static_cast<Slope>(static_cast<int>(apvts.getRawParameterValue("LowCut Slope")->load()));
+    settings.highCutSlope = static_cast<Slope>(static_cast<int>(apvts.getRawParameterValue("HighCut Slope")->load()));
+
+    return settings;
 }
