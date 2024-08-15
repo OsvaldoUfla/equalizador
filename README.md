@@ -36,7 +36,7 @@ Este guia descreve o processo para executar o projeto Equalizador JUCE no Linux.
 2. Você encontrará o arquivo myAudioProcessor.so. Este arquivo pode ser renomeado, se desejado.
 
 ### 5. Adição do Plugin ao Reaper
-O arquivo `myAudioProcessor.so` pode ser adicionado como um plugin no Reaper ou em outro DAW (Digital Audio Workstation) que suporte plugins VST3.
+O arquivo `equalizador.so` pode ser adicionado como um plugin no Reaper ou em outro DAW (Digital Audio Workstation) que suporte plugins VST3.
 
  - Abra o Reaper e vá para Options > Preferences > VST.
  - Adicione o diretório onde o arquivo myAudioProcessor.so está localizado à lista de caminhos de plugins.
