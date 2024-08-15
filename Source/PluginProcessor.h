@@ -115,12 +115,12 @@ private:
     void updateCutFilter(ChainType& cut, const CoefficientType& cutCoefficients, const Slope& slope)
     {
         // Inicializa todos os filtros como bypassed.
-        cut.setBypassed<0>(true);
-        cut.setBypassed<1>(true);
-        cut.setBypassed<2>(true);
-        cut.setBypassed<3>(true);
+        cut.template setBypassed<0>(true);
+        cut.template setBypassed<1>(true);
+        cut.template setBypassed<2>(true);
+        cut.template setBypassed<3>(true);
 
-        // Define os coeficientes e desativa o bypass de acordo com a inclina��o.
+        // Define os coeficientes e desativa o bypass de acordo com a inclinação.
         switch (slope)
         {
         case Slope_48:
@@ -137,6 +137,7 @@ private:
 
         }
     }
+
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EqualizadorAudioProcessor)
 };
