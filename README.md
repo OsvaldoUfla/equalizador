@@ -7,7 +7,7 @@ Este guia descreve o processo para executar o projeto Equalizador JUCE no Linux.
 ### 1. Criação do Projeto no JUCE
 
 1. Abra o JUCE e crie um novo projeto do tipo **Basic**.
-2. Nomeie o projeto como `myAudioProcessor`.
+2. Nomeie o projeto como `equalizador`.
 3. Adicione os seguintes módulos ao projeto:
    - `juce_dsp`
    - `juce_opengl`
