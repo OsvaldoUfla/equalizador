@@ -10,7 +10,7 @@
 #include "PluginEditor.h"
 
 //==============================================================================
-MyAudioProcessorAudioProcessor::MyAudioProcessorAudioProcessor()
+EqualizadorAudioProcessor::EqualizadorAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
      : AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
@@ -25,17 +25,17 @@ MyAudioProcessorAudioProcessor::MyAudioProcessorAudioProcessor()
 
 }
 
-MyAudioProcessorAudioProcessor::~MyAudioProcessorAudioProcessor()
+EqualizadorAudioProcessor::~EqualizadorAudioProcessor()
 {
 }
 
 //==============================================================================
-const juce::String MyAudioProcessorAudioProcessor::getName() const
+const juce::String EqualizadorAudioProcessor::getName() const
 {
     return JucePlugin_Name;
 }
 
-bool MyAudioProcessorAudioProcessor::acceptsMidi() const
+bool EqualizadorAudioProcessor::acceptsMidi() const
 {
    #if JucePlugin_WantsMidiInput
     return true;
@@ -44,7 +44,7 @@ bool MyAudioProcessorAudioProcessor::acceptsMidi() const
    #endif
 }
 
-bool MyAudioProcessorAudioProcessor::producesMidi() const
+bool EqualizadorAudioProcessor::producesMidi() const
 {
    #if JucePlugin_ProducesMidiOutput
     return true;
@@ -53,7 +53,7 @@ bool MyAudioProcessorAudioProcessor::producesMidi() const
    #endif
 }
 
-bool MyAudioProcessorAudioProcessor::isMidiEffect() const
+bool EqualizadorAudioProcessor::isMidiEffect() const
 {
    #if JucePlugin_IsMidiEffect
     return true;
@@ -62,41 +62,41 @@ bool MyAudioProcessorAudioProcessor::isMidiEffect() const
    #endif
 }
 
-double MyAudioProcessorAudioProcessor::getTailLengthSeconds() const
+double EqualizadorAudioProcessor::getTailLengthSeconds() const
 {
     return 0.0;
 }
 
-int MyAudioProcessorAudioProcessor::getNumPrograms()
+int EqualizadorAudioProcessor::getNumPrograms()
 {
     return 1;   // NB: alguns hosts não lidam bem se você disser que há 0 programas,
                 // então isso deve ser pelo menos 1, mesmo que você não esteja realmente implementando programas.
 }
 
-int MyAudioProcessorAudioProcessor::getCurrentProgram()
+int EqualizadorAudioProcessor::getCurrentProgram()
 {
     return 0;
 }
 
-void MyAudioProcessorAudioProcessor::setCurrentProgram (int index)
+void EqualizadorAudioProcessor::setCurrentProgram (int index)
 {
 }
 
-const juce::String MyAudioProcessorAudioProcessor::getProgramName (int index)
+const juce::String EqualizadorAudioProcessor::getProgramName (int index)
 {
     return {};
 }
 
-void MyAudioProcessorAudioProcessor::changeProgramName (int index, const juce::String& newName)
+void EqualizadorAudioProcessor::changeProgramName (int index, const juce::String& newName)
 {
 }
 
-void MyAudioProcessorAudioProcessor::updateCoefficients(juce::dsp::IIR::Filter<float>::CoefficientsPtr& old, const juce::dsp::IIR::Filter<float>::CoefficientsPtr& replacements) 
+void EqualizadorAudioProcessor::updateCoefficients(juce::dsp::IIR::Filter<float>::CoefficientsPtr& old, const juce::dsp::IIR::Filter<float>::CoefficientsPtr& replacements) 
 {
     *old = *replacements;
 }
 
-void MyAudioProcessorAudioProcessor::updatePeakFilter(const ChainSettings& chainSettings)
+void EqualizadorAudioProcessor::updatePeakFilter(const ChainSettings& chainSettings)
 {
     auto peakCoefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(getSampleRate(), chainSettings.peakFreq, chainSettings.peakQuality, juce::Decibels::decibelsToGain(chainSettings.peakGain));
 
@@ -105,7 +105,7 @@ void MyAudioProcessorAudioProcessor::updatePeakFilter(const ChainSettings& chain
 }
 
 //==============================================================================
-void MyAudioProcessorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void EqualizadorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     juce::dsp::ProcessSpec spec;
     spec.maximumBlockSize = samplesPerBlock;
@@ -142,14 +142,14 @@ void MyAudioProcessorAudioProcessor::prepareToPlay (double sampleRate, int sampl
     updateCutFilter(rightHighCut, highCutCoefficients, chainSettings.highCutSlope);
 }
 
-void MyAudioProcessorAudioProcessor::releaseResources()
+void EqualizadorAudioProcessor::releaseResources()
 {
     // Quando a reprodução para, você pode usar isso como uma oportunidade para liberar qualquer
     // memória extra, etc.
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
-bool MyAudioProcessorAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool EqualizadorAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
   #if JucePlugin_IsMidiEffect
     juce::ignoreUnused (layouts);
@@ -174,7 +174,7 @@ bool MyAudioProcessorAudioProcessor::isBusesLayoutSupported (const BusesLayout& 
 }
 #endif
 
-void MyAudioProcessorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void EqualizadorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
@@ -218,12 +218,12 @@ void MyAudioProcessorAudioProcessor::processBlock (juce::AudioBuffer<float>& buf
 }
 
 //==============================================================================
-bool MyAudioProcessorAudioProcessor::hasEditor() const
+bool EqualizadorAudioProcessor::hasEditor() const
 {
     return true; // (altere isso para false se você optar por não fornecer um editor)
 }
 
-juce::AudioProcessorEditor* MyAudioProcessorAudioProcessor::createEditor()
+juce::AudioProcessorEditor* EqualizadorAudioProcessor::createEditor()
 {
 
     //return new MyAudioProcessorAudioProcessorEditor (*this);
@@ -231,14 +231,14 @@ juce::AudioProcessorEditor* MyAudioProcessorAudioProcessor::createEditor()
 }
 
 //==============================================================================
-void MyAudioProcessorAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+void EqualizadorAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     // Você deve usar este método para armazenar seus parâmetros no bloco de memória.
     // Você pode fazer isso como dados brutos ou usar as classes XML ou ValueTree
     // como intermediários para facilitar o salvamento e carregamento de dados complexos.
 }
 
-void MyAudioProcessorAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+void EqualizadorAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     // Você deve usar este método para restaurar seus parâmetros deste bloco de memória,
     // cujo conteúdo será criado pela chamada getStateInformation().
@@ -248,11 +248,11 @@ void MyAudioProcessorAudioProcessor::setStateInformation (const void* data, int 
 // Isso cria novas instâncias do plugin..
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new MyAudioProcessorAudioProcessor();
+    return new EqualizadorAudioProcessor();
 }
 
 // Define o Layout dos 3 parâmetros: Low Band, High Band e Parametric/Peak Band
-juce::AudioProcessorValueTreeState::ParameterLayout MyAudioProcessorAudioProcessor::createParameterLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout EqualizadorAudioProcessor::createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
     layout.add(std::make_unique<juce::AudioParameterFloat>("LowCut", "LowCut", juce::NormalisableRange<float>(20.f, 20000.f, 1.f, 0.25f), 20.f));
