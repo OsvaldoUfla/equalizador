@@ -20,7 +20,7 @@ enum Slope
     Slope_48
 };
 
-// Configuração dos filtros
+// Configuraï¿½ï¿½o dos filtros
 struct ChainSettings
 {
     float peakFreq{ 0 }, peakGain{ 0 }, peakQuality{ 1.f };
@@ -32,12 +32,12 @@ ChainSettings getChainSettings(juce::AudioProcessorValueTreeState& apvts);
 
 /**
 */
-class MyAudioProcessorAudioProcessor  : public juce::AudioProcessor
+class EqualizadorAudioProcessor  : public juce::AudioProcessor
 {
 public:
     //==============================================================================
-    MyAudioProcessorAudioProcessor();
-    ~MyAudioProcessorAudioProcessor() override;
+    EqualizadorAudioProcessor();
+    ~EqualizadorAudioProcessor() override;
 
     //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -85,7 +85,7 @@ private:
         juce::dsp::IIR::Filter<float>, // Terciero filtro na cadeia LowCut
         juce::dsp::IIR::Filter<float> // Quarto filtro na cadeia LowCut
         >, 
-        juce::dsp::IIR::Filter<float>, // Filtro intermediário
+        juce::dsp::IIR::Filter<float>, // Filtro intermediï¿½rio
         juce::dsp::ProcessorChain<
         juce::dsp::IIR::Filter<float>, // Primeiro filtro na cadeia HighCut
         juce::dsp::IIR::Filter<float>, // Segundo filtro na cadeia HighCut
@@ -120,7 +120,7 @@ private:
         cut.setBypassed<2>(true);
         cut.setBypassed<3>(true);
 
-        // Define os coeficientes e desativa o bypass de acordo com a inclinação.
+        // Define os coeficientes e desativa o bypass de acordo com a inclinaï¿½ï¿½o.
         switch (slope)
         {
         case Slope_48:
@@ -138,5 +138,5 @@ private:
         }
     }
     //==============================================================================
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MyAudioProcessorAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EqualizadorAudioProcessor)
 };
