@@ -30,6 +30,66 @@ struct ChainSettings
 
 ChainSettings getChainSettings(juce::AudioProcessorValueTreeState& apvts);
 
+enum ChainPositions
+{
+    LowCut,
+    Peak,
+    HighCut
+};
+
+void updateCoefficients(juce::dsp::IIR::Filter<float>::CoefficientsPtr& old, const juce::dsp::IIR::Filter<float>::CoefficientsPtr& replacements);
+
+juce::dsp::IIR::Filter<float>::CoefficientsPtr makePeakFilter(const ChainSettings& chainSettings, double sampleRate);
+
+template<int index, typename ChainType, typename CoefficientType>
+void update(ChainType& chain, const CoefficientType& coefficients)
+{
+    updateCoefficients(chain.template get<index>().coefficients, coefficients[index]);
+    chain.template setBypassed<index>(false);
+}
+
+template<typename ChainType, typename CoefficientType>
+void updateCutFilter(ChainType& cut, const CoefficientType& cutCoefficients, const Slope& slope)
+{
+    // Inicializa todos os filtros como bypassed.
+    cut.template setBypassed<0>(true);
+    cut.template setBypassed<1>(true);
+    cut.template setBypassed<2>(true);
+    cut.template setBypassed<3>(true);
+
+    // Define os coeficientes e desativa o bypass de acordo com a inclinação.
+    switch (slope)
+    {
+    case Slope_48:
+        update<3>(cut, cutCoefficients);
+
+    case Slope_36:
+        update<2>(cut, cutCoefficients);
+
+    case Slope_24:
+        update<1>(cut, cutCoefficients);
+
+    case Slope_12:
+        update<0>(cut, cutCoefficients);
+
+    }
+}
+
+inline auto makeLowCutFilter(const ChainSettings& chainSettings, double sampleRate)
+{
+    // Desenha os coeficientes de um filtro passa-altas de Butterworth de alta ordem
+    // `chainSettings.lowCutSlope` representa a inclinação desejada do filtro:
+    // Slope Choice 0: 12 dB/oct -> Filtro de 2 ordem
+    // Slope Choice 1: 24 dB/oct -> Filtro de 4 ordem
+    // Slope Choice 2: 36 dB/oct -> Filtro de 6 ordem
+    // Slope Choice 3: 48 dB/oct -> Filtro de 8 ordem
+    return juce::dsp::FilterDesign<float>::designIIRHighpassHighOrderButterworthMethod(chainSettings.lowCutFreq, sampleRate, 2 * (chainSettings.lowCutSlope + 1));
+}
+
+inline auto makeHighCutFilter(const ChainSettings& chainSettings, double sampleRate)
+{
+    return juce::dsp::FilterDesign<float>::designIIRLowpassHighOrderButterworthMethod(chainSettings.highCutFreq, sampleRate, 2 * (chainSettings.highCutSlope + 1));
+}
 /**
 */
 class EqualizadorAudioProcessor  : public juce::AudioProcessor
@@ -85,7 +145,7 @@ private:
         juce::dsp::IIR::Filter<float>, // Terciero filtro na cadeia LowCut
         juce::dsp::IIR::Filter<float> // Quarto filtro na cadeia LowCut
         >, 
-        juce::dsp::IIR::Filter<float>, // Filtro intermedi�rio
+        juce::dsp::IIR::Filter<float>, // Filtro intermediario
         juce::dsp::ProcessorChain<
         juce::dsp::IIR::Filter<float>, // Primeiro filtro na cadeia HighCut
         juce::dsp::IIR::Filter<float>, // Segundo filtro na cadeia HighCut
@@ -94,49 +154,12 @@ private:
         >
     > leftChannelChain, rightChannelChain;
 
-    enum ChainPositions
-    {
-        LowCut,
-        Peak,
-        HighCut
-    };
-
     void updatePeakFilter(const ChainSettings& chainSettings);
-    static void updateCoefficients(juce::dsp::IIR::Filter<float>::CoefficientsPtr& old, const juce::dsp::IIR::Filter<float>::CoefficientsPtr& replacements);
 
-    template<int index, typename ChainType, typename CoefficientType>
-    void update(ChainType& chain, const CoefficientType& coefficients)
-    {
-        updateCoefficients(chain.template get<index>().coefficients, coefficients[index]);
-        chain.template setBypassed<index>(false);
-    }
+    void updateLowCutFilters(const ChainSettings& chainSettings);
+    void updateHighCutFilters(const ChainSettings& chainSettings);
 
-    template<typename ChainType, typename CoefficientType>
-    void updateCutFilter(ChainType& cut, const CoefficientType& cutCoefficients, const Slope& slope)
-    {
-        // Inicializa todos os filtros como bypassed.
-        cut.template setBypassed<0>(true);
-        cut.template setBypassed<1>(true);
-        cut.template setBypassed<2>(true);
-        cut.template setBypassed<3>(true);
-
-        // Define os coeficientes e desativa o bypass de acordo com a inclinação.
-        switch (slope)
-        {
-        case Slope_48:
-            update<3>(cut, cutCoefficients);
-
-        case Slope_36:
-            update<2>(cut, cutCoefficients);
-
-        case Slope_24:
-            update<1>(cut, cutCoefficients);
-
-        case Slope_12:
-            update<0>(cut, cutCoefficients);
-
-        }
-    }
+    void updateFilters();
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EqualizadorAudioProcessor)

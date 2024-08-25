@@ -91,15 +91,51 @@ void EqualizadorAudioProcessor::changeProgramName (int index, const juce::String
 {
 }
 
-void EqualizadorAudioProcessor::updateCoefficients(juce::dsp::IIR::Filter<float>::CoefficientsPtr& old, const juce::dsp::IIR::Filter<float>::CoefficientsPtr& replacements) 
+void /*EqualizadorAudioProcessor::*/updateCoefficients(juce::dsp::IIR::Filter<float>::CoefficientsPtr& old, const juce::dsp::IIR::Filter<float>::CoefficientsPtr& replacements)
 {
     *old = *replacements;
 }
 
+void EqualizadorAudioProcessor::updateLowCutFilters(const ChainSettings &chainSettings) 
+{
+    auto lowCutCoefficients = makeLowCutFilter(chainSettings, getSampleRate());
+
+    auto& leftLowCut = leftChannelChain.get<ChainPositions::LowCut>();
+    auto& rightLowCut = rightChannelChain.get<ChainPositions::LowCut>();
+
+    updateCutFilter(leftLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
+    updateCutFilter(rightLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
+}
+
+void EqualizadorAudioProcessor::updateHighCutFilters(const ChainSettings& chainSettings)
+{
+    auto highCutCoefficients = makeHighCutFilter(chainSettings, getSampleRate());;
+
+    auto& leftHighCut = leftChannelChain.get<ChainPositions::HighCut>();
+    auto& rightHighCut = rightChannelChain.get<ChainPositions::HighCut>();
+
+    updateCutFilter(leftHighCut, highCutCoefficients, chainSettings.highCutSlope);
+    updateCutFilter(rightHighCut, highCutCoefficients, chainSettings.highCutSlope);
+}
+
+void EqualizadorAudioProcessor::updateFilters() 
+{
+    auto chainSettings = getChainSettings(apvts);
+
+    updateLowCutFilters(chainSettings);
+    updatePeakFilter(chainSettings);
+    updateHighCutFilters(chainSettings);
+}
+
+juce::dsp::IIR::Filter<float>::CoefficientsPtr makePeakFilter(const ChainSettings& chainSettings, double sampleRate)
+{
+    return juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, chainSettings.peakFreq, chainSettings.peakQuality, juce::Decibels::decibelsToGain(chainSettings.peakGain));
+}
+
 void EqualizadorAudioProcessor::updatePeakFilter(const ChainSettings& chainSettings)
 {
-    auto peakCoefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(getSampleRate(), chainSettings.peakFreq, chainSettings.peakQuality, juce::Decibels::decibelsToGain(chainSettings.peakGain));
 
+    auto peakCoefficients = makePeakFilter(chainSettings, getSampleRate());
     updateCoefficients(leftChannelChain.get<ChainPositions::Peak>().coefficients, peakCoefficients);
     updateCoefficients(rightChannelChain.get<ChainPositions::Peak>().coefficients, peakCoefficients);
 }
@@ -115,31 +151,7 @@ void EqualizadorAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     leftChannelChain.prepare(spec);
     rightChannelChain.prepare(spec);
 
-    auto chainSettings = getChainSettings(apvts);
-
-    updatePeakFilter(chainSettings);
-
-    // Desenha os coeficientes de um filtro passa-altas de Butterworth de alta ordem
-    // `chainSettings.lowCutSlope` representa a inclinação desejada do filtro:
-    // Slope Choice 0: 12 dB/oct -> Filtro de 2 ordem
-    // Slope Choice 1: 24 dB/oct -> Filtro de 4 ordem
-    // Slope Choice 2: 36 dB/oct -> Filtro de 6 ordem
-    // Slope Choice 3: 48 dB/oct -> Filtro de 8 ordem
-    auto lowCutCoefficients = juce::dsp::FilterDesign<float>::designIIRHighpassHighOrderButterworthMethod(chainSettings.lowCutFreq, sampleRate, 2*(chainSettings.lowCutSlope + 1));
-
-    auto& leftLowCut = leftChannelChain.get<ChainPositions::LowCut>();
-    updateCutFilter(leftLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
-
-    auto& rightLowCut = rightChannelChain.get<ChainPositions::LowCut>();
-    updateCutFilter(rightLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
-
-    auto highCutCoefficients = juce::dsp::FilterDesign<float>::designIIRLowpassHighOrderButterworthMethod(chainSettings.highCutFreq, sampleRate, 2 * (chainSettings.highCutSlope + 1));
-
-    auto& leftHighCut = leftChannelChain.get<ChainPositions::HighCut>();
-    updateCutFilter(leftHighCut, highCutCoefficients, chainSettings.highCutSlope);
-
-    auto& rightHighCut = rightChannelChain.get<ChainPositions::HighCut>();
-    updateCutFilter(rightHighCut, highCutCoefficients, chainSettings.highCutSlope);
+    updateFilters();
 }
 
 void EqualizadorAudioProcessor::releaseResources()
@@ -184,25 +196,7 @@ void EqualizadorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    auto chainSettings = getChainSettings(apvts);
-
-    updatePeakFilter(chainSettings);
-
-    auto lowCutCoefficients = juce::dsp::FilterDesign<float>::designIIRHighpassHighOrderButterworthMethod(chainSettings.lowCutFreq, getSampleRate(), 2 * (chainSettings.lowCutSlope + 1));
-
-    auto& leftLowCut = leftChannelChain.get<ChainPositions::LowCut>();
-    updateCutFilter(leftLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
-
-    auto& rightLowCut = rightChannelChain.get<ChainPositions::LowCut>();
-    updateCutFilter(rightLowCut, lowCutCoefficients, chainSettings.lowCutSlope);
-
-    auto highCutCoefficients = juce::dsp::FilterDesign<float>::designIIRLowpassHighOrderButterworthMethod(chainSettings.highCutFreq, getSampleRate(), 2 * (chainSettings.highCutSlope + 1));
-
-    auto& leftHighCut = leftChannelChain.get<ChainPositions::HighCut>();
-    updateCutFilter(leftHighCut, highCutCoefficients, chainSettings.highCutSlope);
-
-    auto& rightHighCut = rightChannelChain.get<ChainPositions::HighCut>();
-    updateCutFilter(rightHighCut, highCutCoefficients, chainSettings.highCutSlope);
+    updateFilters();
 
     // Cria um AudioBlock a partir do buffer
     juce::dsp::AudioBlock<float> audioBlock(buffer);
@@ -226,8 +220,8 @@ bool EqualizadorAudioProcessor::hasEditor() const
 juce::AudioProcessorEditor* EqualizadorAudioProcessor::createEditor()
 {
 
-    //return new MyAudioProcessorAudioProcessorEditor (*this);
-    return new juce::GenericAudioProcessorEditor(*this);
+    return new EqualizadorAudioProcessorEditor (*this);
+    //return new juce::GenericAudioProcessorEditor(*this);
 }
 
 //==============================================================================
@@ -236,12 +230,20 @@ void EqualizadorAudioProcessor::getStateInformation (juce::MemoryBlock& destData
     // Você deve usar este método para armazenar seus parâmetros no bloco de memória.
     // Você pode fazer isso como dados brutos ou usar as classes XML ou ValueTree
     // como intermediários para facilitar o salvamento e carregamento de dados complexos.
+
+    juce::MemoryOutputStream mos(destData, true);
+    apvts.state.writeToStream(mos);
 }
 
 void EqualizadorAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     // Você deve usar este método para restaurar seus parâmetros deste bloco de memória,
     // cujo conteúdo será criado pela chamada getStateInformation().
+    auto tree = juce::ValueTree::readFromData(data, sizeInBytes);
+    if (tree.isValid()) {
+        apvts.replaceState(tree);
+        updateFilters();
+    }
 }
 
 //==============================================================================
@@ -267,7 +269,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout EqualizadorAudioProcessor::c
     {
         juce::String str;
         str << (12 + 12 * i);
-        str << " db";
+        str << " dB/Oct";
         strArr.add(str);
     }
 
