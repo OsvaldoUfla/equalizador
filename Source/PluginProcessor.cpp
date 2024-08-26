@@ -152,6 +152,15 @@ void EqualizadorAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     rightChannelChain.prepare(spec);
 
     updateFilters();
+
+    leftChannelFifo.prepare(samplesPerBlock);
+    rightChannelFifo.prepare(samplesPerBlock);
+
+    // Inicializa um oscilador para teste
+    osc.initialise([](float x) { return std::sin(x); });
+    spec.numChannels = getTotalNumOutputChannels();
+    osc.prepare(spec);
+    osc.setFrequency(1000);
 }
 
 void EqualizadorAudioProcessor::releaseResources()
@@ -200,6 +209,11 @@ void EqualizadorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
 
     // Cria um AudioBlock a partir do buffer
     juce::dsp::AudioBlock<float> audioBlock(buffer);
+
+    //buffer.clear();
+    //juce::dsp::ProcessContextReplacing<float> stereoContext(audioBlock);
+    //osc.process(stereoContext);
+
     auto leftAudioBlock = audioBlock.getSingleChannelBlock(0);
     auto rightAudioBlock = audioBlock.getSingleChannelBlock(1);
 
@@ -209,6 +223,8 @@ void EqualizadorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     leftChannelChain.process(leftContext);
     rightChannelChain.process(rightContext);
 
+    leftChannelFifo.update(buffer);
+    rightChannelFifo.update(buffer);
 }
 
 //==============================================================================

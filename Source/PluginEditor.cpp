@@ -178,7 +178,7 @@ void VerticalSliderWithLabels::paint(juce::Graphics& g)
     auto thumbPos = juce::jmap<float>(getValue(), range.getStart(), range.getEnd(), 0.0f, static_cast<float>(sliderBounds.getHeight()));
 
     // Desenhar o fundo do slider
-    g.setColour(juce::Colours::black); // Cor de fundo do slider
+    g.setColour(juce::Colour(15, 15, 15)); // Cor de fundo do slider
     g.fillRect(sliderBounds);
 
     // Desenhar o trilho do slider
@@ -233,18 +233,38 @@ RotarySliderWithLabels::RotarySliderWithLabels(juce::RangedAudioParameter& rap, 
 void RotarySliderWithLabels::paint(juce::Graphics& g)
 {
     auto startAng = juce::degreesToRadians(180.f + 45.f);
-    auto endAng = juce::degreesToRadians(180.f + 45.f) + juce::MathConstants<float>::twoPi;
+    auto endAng = juce::degreesToRadians(180.f - 45.f) + juce::MathConstants<float>::twoPi;
 
     auto range = getRange();
     auto sliderBounds = getSliderBounds();
 
-    //g.setColour(juce::Colours::red);
-    //g.drawRect(getLocalBounds());
-    //g.setColour(juce::Colours::yellow);
-    //g.drawRect(getLocalBounds());
-
     getLookAndFeel().drawRotarySlider(g, sliderBounds.getX(), sliderBounds.getY(), sliderBounds.getWidth(), sliderBounds.getHeight(),
         juce::jmap(getValue(), range.getStart(), range.getEnd(), 0.0, 1.0), startAng, endAng, *this);
+
+    auto center = sliderBounds.toFloat().getCentre();
+    auto radius = sliderBounds.getWidth() * 0.5f;
+
+    g.setColour(juce::Colours::white);
+    g.setFont(getTextHeight());
+
+    auto numChoices = labels.size();
+    for (int i = 0; i < numChoices; ++i)
+    {
+        auto pos = labels[i].pos;
+        jassert(0.f <= pos);
+        jassert(pos <= 1.f);
+
+        auto ang = juce::jmap(pos, 0.f, 1.f, startAng, endAng);
+        auto c = center.getPointOnCircumference(radius + getTextHeight() * 0.5f + 1, ang); // Centraliza e ajusta o rótulo
+
+        juce::Rectangle<float> r;
+        auto str = labels[i].label;
+        r.setSize(g.getCurrentFont().getStringWidth(str), getTextHeight());
+        r.setCentre(c);
+        r.setY(r.getY() + getTextBoxHeight()); // Posiciona o rótulo um pouco abaixo
+
+        g.drawFittedText(str, r.toNearestInt(), juce::Justification::centred, 1);
+    }
 }
 
 juce::Rectangle<int> RotarySliderWithLabels::getSliderBounds() const
@@ -253,13 +273,15 @@ juce::Rectangle<int> RotarySliderWithLabels::getSliderBounds() const
 }
 
 //==============================================================================
-ResponseCurveComponent::ResponseCurveComponent(EqualizadorAudioProcessor& p) : audioProcessor(p)
+ResponseCurveComponent::ResponseCurveComponent(EqualizadorAudioProcessor& p) : audioProcessor(p), leftPathProducer(audioProcessor.leftChannelFifo), rightPathProducer(audioProcessor.rightChannelFifo)   //leftChannelFifo(&audioProcessor.leftChannelFifo)
 {
     const auto& params = audioProcessor.getParameters();
     for (auto param : params)
     {
         param->addListener(this);
     }
+
+    updateChain();
     startTimerHz(60);
 }
 
@@ -277,30 +299,86 @@ void ResponseCurveComponent::parameterValueChanged(int parameterIndex, float new
     parametersChanged.set(true);
 }
 
+void PathProducer::process(juce::Rectangle<float> fftBounds, double sampleRate)
+{
+    juce::AudioBuffer<float> tempIncomingBuffer;
+    while (leftChannelFifo->getNumCompleteBuffersAvailable() > 0)
+    {
+        if (leftChannelFifo->getAudioBuffer(tempIncomingBuffer))
+        {
+            auto size = tempIncomingBuffer.getNumSamples();
+            // O buffer de amostras transloca os conteúdos para a "esquerda"
+            juce::FloatVectorOperations::copy(monoBuffer.getWritePointer(0, 0), monoBuffer.getReadPointer(0, size), monoBuffer.getNumSamples() - size);
+            juce::FloatVectorOperations::copy(monoBuffer.getWritePointer(0, monoBuffer.getNumSamples() - size), tempIncomingBuffer.getReadPointer(0, 0), size);
+
+            leftChannelFFTDataGenerator.produceFFTDataForRendering(monoBuffer, -48.f);
+        }
+    }
+
+    // Se houver buffers de dados FFT para puxar
+    //      Se possível puxar um buffer
+    //          Gera um path (caminho gráfico)
+
+    const auto fftSize = leftChannelFFTDataGenerator.getFFTSize();
+
+    const auto binWidth = sampleRate / (double)fftSize;
+
+    while (leftChannelFFTDataGenerator.getNumAvailableFFTDataBlocks() > 0)
+    {
+        std::vector<float> fftData;
+        if (leftChannelFFTDataGenerator.getFFTData(fftData))
+        {
+            pathProducer.generatePath(fftData, fftBounds, fftSize, binWidth, -48.f);
+        }
+    }
+
+    // Enquanto há paths que podem ser puxados
+    //      Puxe o tanto quando possível
+    //          Exponha o path mais recente
+
+    while (pathProducer.getNumPathsAvailable())
+    {
+        pathProducer.getPath(leftChannelFFTPath);
+    }
+}
+
 void ResponseCurveComponent::timerCallback()
 {
+
+    auto fftBounds = getAnalysisArea().toFloat();
+    auto sampleRate = audioProcessor.getSampleRate();
+
+    leftPathProducer.process(fftBounds, sampleRate);
+    rightPathProducer.process(fftBounds, sampleRate);
+
     if (parametersChanged.compareAndSetBool(false, true))
     {
         // Atualiza a corrente mono
-        auto chainSettings = getChainSettings(audioProcessor.apvts);
-        auto sampleRate = audioProcessor.getSampleRate();
-        auto peakCoefficients = makePeakFilter(chainSettings, sampleRate);
-        updateCoefficients(monoChain.get<ChainPositions::Peak>().coefficients, peakCoefficients);
-
-        auto lowCutCoefficients = makeLowCutFilter(chainSettings, sampleRate);
-        auto highCutCoefficients = makeHighCutFilter(chainSettings, sampleRate);
-
-        updateCutFilter(monoChain.get<ChainPositions::LowCut>(), lowCutCoefficients, chainSettings.lowCutSlope);
-        updateCutFilter(monoChain.get<ChainPositions::HighCut>(), highCutCoefficients, chainSettings.highCutSlope);
-        repaint();
+        updateChain();
     }
+    repaint();
+}
+
+void ResponseCurveComponent::updateChain() 
+{
+    auto chainSettings = getChainSettings(audioProcessor.apvts);
+    auto sampleRate = audioProcessor.getSampleRate();
+    auto peakCoefficients = makePeakFilter(chainSettings, sampleRate);
+    updateCoefficients(monoChain.get<ChainPositions::Peak>().coefficients, peakCoefficients);
+
+    auto lowCutCoefficients = makeLowCutFilter(chainSettings, sampleRate);
+    auto highCutCoefficients = makeHighCutFilter(chainSettings, sampleRate);
+
+    updateCutFilter(monoChain.get<ChainPositions::LowCut>(), lowCutCoefficients, chainSettings.lowCutSlope);
+    updateCutFilter(monoChain.get<ChainPositions::HighCut>(), highCutCoefficients, chainSettings.highCutSlope);
 }
 
 void ResponseCurveComponent::paint(juce::Graphics& g)
 {
-    // (Our component is opaque, so we must completely fill the background with a solid colour)
     g.fillAll(juce::Colours::black);
-    auto responseArea = getLocalBounds();
+
+    g.drawImage(background, getLocalBounds().toFloat());
+    auto responseArea = getRenderArea();
 
     auto w = responseArea.getWidth();
     auto& lowcut = monoChain.get<ChainPositions::LowCut>();
@@ -354,11 +432,148 @@ void ResponseCurveComponent::paint(juce::Graphics& g)
         responseCurve.lineTo(responseArea.getX() + i, map(mags[i]));
     }
 
+    auto leftChannelFFTPath = leftPathProducer.getPath();
+    leftChannelFFTPath.applyTransform(juce::AffineTransform().translation(responseArea.getX(), responseArea.getY()));
+
+    g.setColour(juce::Colour(37, 150, 190));
+    g.strokePath(leftChannelFFTPath, juce::PathStrokeType(1.f));
+
+    auto rightChannelFFTPath = rightPathProducer.getPath();
+    rightChannelFFTPath.applyTransform(juce::AffineTransform().translation(responseArea.getX(), responseArea.getY()));
+
+    g.setColour(juce::Colour(255, 213, 128));
+    g.strokePath(rightChannelFFTPath, juce::PathStrokeType(1.f));
+
     g.setColour(juce::Colour(0, 128, 255));
-    g.drawRoundedRectangle(responseArea.toFloat(), 4.f, 1.f);
+    g.drawRoundedRectangle(getRenderArea().toFloat(), 4.f, 1.f);
 
     g.setColour(juce::Colours::white);
     g.strokePath(responseCurve, juce::PathStrokeType(2.f));
+}
+
+void ResponseCurveComponent::resized()
+{
+    background = juce::Image(juce::Image::PixelFormat::RGB, getWidth(), getHeight(), true);
+
+    juce::Graphics g(background);
+    juce::Array<float> freqs
+    {
+        20, 50, 100,
+        200, 500, 1000,
+        2000, 5000, 10000,
+        20000
+    };
+
+    auto renderArea = getAnalysisArea();
+    auto left = renderArea.getX();
+    auto right = renderArea.getRight();
+    auto top = renderArea.getY();
+    auto bottom = renderArea.getBottom();
+    auto width = renderArea.getWidth();
+
+    juce::Array<float> xs;
+    for (auto f : freqs)
+    {
+        auto normX = juce::mapFromLog10(f, 20.f, 20000.f);
+        xs.add(left + width * normX);
+    }
+
+    g.setColour(juce::Colours::dimgrey);
+    for (auto x : xs)
+    {
+        g.drawVerticalLine(x, top, bottom);
+    }
+
+    juce::Array<float> gain
+    {
+        -24, -12, 0, 12, 24
+    };
+
+    for (auto gDb : gain)
+    {
+        auto y = juce::jmap(gDb, -24.f, 24.f, float(bottom), float(top));
+        g.setColour(gDb == 0.f ? juce::Colours::green : juce::Colours::darkgrey);
+        g.drawHorizontalLine(y, left, right);
+    }
+
+    g.setColour(juce::Colours::lightgrey);
+    const int fontHeight = 10;
+    g.setFont(fontHeight);
+
+    for (int i = 0; i < freqs.size(); ++i)
+    {
+        auto f = freqs[i];
+        auto x = xs[i];
+
+        bool addK = false;
+        juce::String str;
+        if (f > 999.f)
+        {
+            addK = true;
+            f /= 1000.f;
+        }
+        str << f;
+        if (addK)
+            str << "k";
+        str << "Hz";
+
+        auto textWidth = g.getCurrentFont().getStringWidth(str);
+
+        juce::Rectangle<int> r;
+        r.setSize(textWidth, fontHeight);
+        r.setCentre(x, 0);
+        r.setY(1);
+
+        g.drawFittedText(str, r, juce::Justification::centred, 1);
+    }
+
+    for (auto gDb : gain)
+    {
+        auto y = juce::jmap(gDb, -24.f, 24.f, float(bottom), float(top));
+        juce::String str;
+        if (gDb > 0)
+            str << "+";
+        str << gDb;
+
+        auto textWidth = g.getCurrentFont().getStringWidth(str);
+
+        juce::Rectangle<int> r;
+        r.setSize(textWidth, fontHeight);
+        r.setX(getWidth() - textWidth);
+        r.setCentre(r.getCentreX(), y);
+
+        g.setColour(gDb == 0.f ? juce::Colours::green : juce::Colours::lightgrey);
+
+        g.drawFittedText(str, r, juce::Justification::centred, 1);
+        str.clear();
+        str << (gDb - 24.f);
+
+        r.setX(1);
+        textWidth = g.getCurrentFont().getStringWidth(str);
+        r.setSize(textWidth, fontHeight);
+        g.setColour(juce::Colours::lightgrey);
+        g.drawFittedText(str, r, juce::Justification::centred, 1);
+    }
+}
+
+juce::Rectangle<int> ResponseCurveComponent::getRenderArea()
+{
+    auto bounds = getLocalBounds();
+
+    bounds.removeFromTop(12);
+    bounds.removeFromBottom(2);
+    bounds.removeFromLeft(20);
+    bounds.removeFromRight(20);
+
+    return bounds;
+}
+
+juce::Rectangle<int> ResponseCurveComponent::getAnalysisArea()
+{
+    auto bounds = getRenderArea();
+    bounds.removeFromTop(4);
+    bounds.removeFromBottom(4);
+    return bounds;
 }
 
 //==============================================================================
@@ -383,6 +598,21 @@ EqualizadorAudioProcessorEditor::EqualizadorAudioProcessorEditor (EqualizadorAud
 {
     // Make sure that before the constructor has finished, you've set the
     // editor's size to whatever you need it to be.
+
+    peakFreqSlider.labels.add({ 0.f, "20Hz" });
+    peakFreqSlider.labels.add({ 1.f, "20kHz" });
+
+    peakGainSlider.labels.add({ 0.f, "-24dB" });
+    peakGainSlider.labels.add({ 1.f, "+24dB" });
+
+    peakQualitySlider.labels.add({ 0.f, "0.1" });
+    peakQualitySlider.labels.add({ 1.f, "10.0" });
+
+    lowCutFreqSlider.labels.add({ 0.f, "20Hz" });
+    lowCutFreqSlider.labels.add({ 1.f, "20kHz" });
+
+    highCutFreqSlider.labels.add({ 0.f, "20Hz" });
+    highCutFreqSlider.labels.add({ 1.f, "20kHz" });
 
     for (auto* comp : getComps())
     {
@@ -412,14 +642,18 @@ void EqualizadorAudioProcessorEditor::resized()
 
     // Obtém a área disponível para os componentes
     auto bounds = getLocalBounds();
+    //float hRatio = 25.f / 100.f;
+
 
     // Adicionar espaço de sobra nos cantos
-    int cornerMargin = 20;  // Define a margem em pixels
+    int cornerMargin = 25;  // Define a margem em pixels
     bounds.reduce(cornerMargin, cornerMargin);  // Aplica a margem
 
     // Define a altura para a área de resposta, mantendo-a no topo
     auto responseArea = bounds.removeFromTop(bounds.getHeight() * 0.33);
     responseCurveComponent.setBounds(responseArea);
+
+    bounds.removeFromTop(5);
 
     // Área para sliders de frequência de corte e peak
     auto freqArea = bounds.removeFromTop(bounds.getHeight() * 0.5);
@@ -434,7 +668,7 @@ void EqualizadorAudioProcessorEditor::resized()
     highCutFreqSlider.setBounds(highCutArea);
 
     // Ajuste do espaçamento entre sliders de slope e corte
-    int slopeSpacing = 10; // Espaçamento extra
+    int slopeSpacing = 25; // Espaçamento extra
 
     // Sliders de slope ao lado oposto com espaçamento extra
     lowCutSlopeSlider.setBounds(lowCutArea.removeFromLeft(lowCutArea.getWidth() * 0.3).translated(-slopeSpacing, 0));  // À esquerda do LowCutFreq

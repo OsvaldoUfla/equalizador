@@ -11,6 +11,197 @@
 #include <JuceHeader.h>
 
 //==============================================================================
+#include <array>
+template<typename T>
+struct Fifo
+{
+    void prepare(int numChannels, int numSamples)
+    {
+        static_assert(std::is_same_v<T, juce::AudioBuffer<float>>,
+            "prepare(numChannels, numSamples) should only be used when the Fifo is holding juce::AudioBuffer<float>");
+        for (auto& buffer : buffers)
+        {
+            buffer.setSize(numChannels,
+                numSamples,
+                false,   //clear everything?
+                true,    //including the extra space?
+                true);   //avoid reallocating if you can?
+            buffer.clear();
+        }
+    }
+
+    void prepare(size_t numElements)
+    {
+        static_assert(std::is_same_v<T, std::vector<float>>,
+            "prepare(numElements) should only be used when the Fifo is holding std::vector<float>");
+        for (auto& buffer : buffers)
+        {
+            buffer.clear();
+            buffer.resize(numElements, 0);
+        }
+    }
+
+    bool push(const T& t)
+    {
+        auto write = fifo.write(1);
+        if (write.blockSize1 > 0)
+        {
+            buffers[write.startIndex1] = t;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool pull(T& t)
+    {
+        auto read = fifo.read(1);
+        if (read.blockSize1 > 0)
+        {
+            t = buffers[read.startIndex1];
+            return true;
+        }
+
+        return false;
+    }
+
+    int getNumAvailableForReading() const
+    {
+        return fifo.getNumReady();
+    }
+private:
+    static constexpr int Capacity = 30;
+    std::array<T, Capacity> buffers;
+    juce::AbstractFifo fifo{ Capacity };
+};
+
+enum Channel
+{
+    Right, // Efetivamente 0
+    Left // Efetivamente 1
+};
+
+template<typename BlockType>
+struct SingleChannelSampleFifo
+{
+    // Construtor que inicializa a estrutura com o canal de áudio especificado
+    SingleChannelSampleFifo(Channel ch) : channelToUse(ch)
+    {
+        // Inicializa o estado de preparado como falso
+        prepared.set(false);
+    }
+
+    // Função para atualizar o FIFO com novos dados de áudio
+    void update(const BlockType& buffer)
+    {
+        // Verifica se a estrutura está preparada para uso
+        jassert(prepared.get());
+
+        // Verifica se o buffer de áudio tem canais suficientes
+        jassert(buffer.getNumChannels() > channelToUse);
+
+        // Obtém o ponteiro para o canal de áudio especificado
+        auto* channelPtr = buffer.getReadPointer(channelToUse);
+
+        // Insere cada amostra do canal no FIFO
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            pushNextSampleIntoFifo(channelPtr[i]);
+        }
+    }
+
+    // Função para preparar a estrutura para o processamento
+    void prepare(int bufferSize)
+    {
+        // Marca a estrutura como não preparada
+        prepared.set(false);
+
+        // Define o tamanho do buffer
+        size.set(bufferSize);
+
+        // Configura o buffer para preenchimento
+        bufferToFill.setSize(1,             // 1 canal
+            bufferSize,    // número de amostras
+            false,         // não manter conteúdo existente
+            true,          // limpar espaço extra
+            true);         // evitar realocação de memória
+
+        // Prepara o FIFO para armazenar buffers completos
+        audioBufferFifo.prepare(1, bufferSize);
+
+        // Reseta o índice do FIFO
+        fifoIndex = 0;
+
+        // Marca a estrutura como preparada
+        prepared.set(true);
+    }
+
+    // Função que retorna o número de buffers completos disponíveis no FIFO
+    int getNumCompleteBuffersAvailable() const
+    {
+        return audioBufferFifo.getNumAvailableForReading();
+    }
+
+    // Função que retorna se a estrutura está preparada para uso
+    bool isPrepared() const
+    {
+        return prepared.get();
+    }
+
+    // Função que retorna o tamanho do buffer
+    int getSize() const
+    {
+        return size.get();
+    }
+
+    // Função que puxa um buffer completo do FIFO para processamento
+    bool getAudioBuffer(BlockType& buf)
+    {
+        return audioBufferFifo.pull(buf);
+    }
+
+private:
+    // Canal de áudio que está sendo utilizado
+    Channel channelToUse;
+
+    // Índice que rastreia a posição atual no buffer
+    int fifoIndex = 0;
+
+    // FIFO que armazena os buffers completos
+    Fifo<BlockType> audioBufferFifo;
+
+    // Buffer que está sendo preenchido com amostras
+    BlockType bufferToFill;
+
+    // Flag atômico que indica se a estrutura está preparada
+    juce::Atomic<bool> prepared = false;
+
+    // Tamanho do buffer, armazenado de forma atômica
+    juce::Atomic<int> size = 0;
+
+    // Função privada para inserir a próxima amostra no FIFO
+    void pushNextSampleIntoFifo(float sample)
+    {
+        // Verifica se o buffer está cheio
+        if (fifoIndex == bufferToFill.getNumSamples())
+        {
+            // Se o buffer estiver cheio, empurra-o para o FIFO
+            auto ok = audioBufferFifo.push(bufferToFill);
+
+            // Ignora a variável 'ok' se não for usada
+            juce::ignoreUnused(ok);
+
+            // Reseta o índice para começar a preencher o próximo buffer
+            fifoIndex = 0;
+        }
+
+        // Insere a amostra atual no buffer
+        bufferToFill.setSample(0, fifoIndex, sample);
+
+        // Incrementa o índice para a próxima posição
+        ++fifoIndex;
+    }
+};
 
 enum Slope
 {
@@ -136,6 +327,8 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     juce::AudioProcessorValueTreeState apvts{ *this, nullptr, "Parameters", createParameterLayout()};
 
+    SingleChannelSampleFifo <juce::AudioBuffer<float>> leftChannelFifo{ Channel::Left };
+    SingleChannelSampleFifo <juce::AudioBuffer<float>> rightChannelFifo{ Channel::Right };
 private:
     // Cadeia de processamento para o canal esquerdo e direito
     juce::dsp::ProcessorChain<
@@ -161,6 +354,7 @@ private:
 
     void updateFilters();
 
+    juce::dsp::Oscillator<float> osc;
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EqualizadorAudioProcessor)
 };
